@@ -2155,6 +2155,38 @@ function resetAll() {
   location.reload();
 }
 
+function resetCurrentMonthShifts() {
+  if (state.confirmedShifts?.[state.yearMonth]) {
+    alert(`${formatMonth()}のシフトは確定済みのためリセットできません。\nリセットする場合は、先に確定を解除してください。`);
+    return;
+  }
+
+  const hasShiftData = state.staffs.some(staff => {
+    for (let day = 1; day <= daysInMonth(); day++) {
+      const shift = state.shifts[staff.id]?.[day];
+      if (shift && shift !== "空") return true;
+    }
+    return false;
+  });
+
+  if (!hasShiftData) {
+    alert(`${formatMonth()}のシフトはすでに空です。`);
+    return;
+  }
+
+  if (!confirm(
+    `${formatMonth()}のシフトをすべて空にしますか？\n\nスタッフ情報・店舗設定・他の月のシフトは削除されません。`
+  )) return;
+
+  state.shifts = createBlankShiftsForCurrentMonth();
+  state.monthlyShifts[state.yearMonth] = cloneShifts(state.shifts);
+
+  save();
+  render();
+
+  alert(`${formatMonth()}のシフトをリセットしました。`);
+}
+
 function render() {
   ensureShiftData();
 
@@ -2547,6 +2579,13 @@ function renderShiftPage() {
         <button class="image-btn" onclick="saveShiftImage()">画像保存</button>
         <button class="confirm-btn" onclick="confirmCurrentShift()">シフト確定</button>
         ${isConfirmed ? `<button class="unconfirm-btn" onclick="openUnconfirmModal()">確定解除</button>` : ""}
+        <button
+          class="reset-shift-btn"
+          onclick="resetCurrentMonthShifts()"
+          ${isConfirmed ? `disabled title="確定済みのため、先に確定を解除してください"` : ""}
+        >
+          ${isConfirmed ? "確定済み・リセット不可" : "今月のシフトをリセット"}
+        </button>
         <button class="light-btn" onclick="resetAll()">全リセット</button>
       </div>
     </div>

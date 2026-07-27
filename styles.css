@@ -256,6 +256,29 @@ button {
   background: #344054;
 }
 
+.reset-shift-btn {
+  padding: 12px 16px;
+  border: 1px solid #f04438;
+  border-radius: 10px;
+  background: #fff5f4;
+  color: #b42318;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.reset-shift-btn:hover:not(:disabled) {
+  background: #fee4e2;
+  box-shadow: 0 4px 10px rgba(240, 68, 56, 0.14);
+}
+
+.reset-shift-btn:disabled {
+  border-color: #d0d5dd;
+  background: #f2f4f7;
+  color: #98a2b3;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
