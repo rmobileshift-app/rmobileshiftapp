@@ -2142,6 +2142,15 @@ function exportCSV() {
     return `<td class="${cls}">${late}</td>`;
   }).join("");
 
+  const holidayRow = Array.from({ length: days }, (_, i) => {
+    const day = i + 1;
+    const holidays = getHolidayCountOnDay(day);
+    const limit = getHolidayLimitOnDay(day);
+    const cls = holidays > limit ? "shortage" : "ok";
+
+    return `<td class="${cls}">${holidays}</td>`;
+  }).join("");
+
   const requiredRow = Array.from({ length: days }, (_, i) => {
     const day = i + 1;
     return `<td>${getRequiredPeople(day)}</td>`;
@@ -2244,6 +2253,11 @@ function exportCSV() {
           <tr>
             <td class="staff-name" colspan="2">遅番人数</td>
             ${lateRow}
+            <td colspan="4"></td>
+          </tr>
+          <tr>
+            <td class="staff-name" colspan="2">休み人数</td>
+            ${holidayRow}
             <td colspan="4"></td>
           </tr>
           <tr>
@@ -2861,6 +2875,25 @@ function renderShiftTable() {
     </tr>
   `;
 
+  const holidayCountRow = `
+    <tr class="daily-count-row">
+      <td class="sticky-name daily-label">休み人数</td>
+      ${Array.from({ length: days }, (_, i) => {
+        const day = i + 1;
+        const holidays = getHolidayCountOnDay(day);
+        const limit = getHolidayLimitOnDay(day);
+        const overLimit = holidays > limit;
+
+        return `
+          <td class="${overLimit ? "shortage-cell" : "ok-cell"}" title="上限${limit}人">
+            ${holidays}
+          </td>
+        `;
+      }).join("")}
+      <td colspan="5" class="daily-note">日別休み上限と比較</td>
+    </tr>
+  `;
+
   return `
     <table class="shift-table improved-table">
       <thead>${header}</thead>
@@ -2869,6 +2902,7 @@ function renderShiftTable() {
         ${dailyCountRow}
         ${earlyCountRow}
         ${lateCountRow}
+        ${holidayCountRow}
       </tbody>
     </table>
   `;
