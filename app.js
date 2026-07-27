@@ -926,14 +926,12 @@ function assignNewStaffWorkTypesOnly(targetStaffs) {
     let earlyCount = getShiftCountOnDay(d, "早");
 
     while (earlyCount < Number(state.minEarly)) {
-      const candidate = targetWorkers
-        .filter(staff => staff.canEarly)
-        .filter(staff => !assignedOnDay.has(staff.id))
-        .sort((a, b) => {
-          const aScore = counts[a.id].early * 100 + counts[a.id].total;
-          const bScore = counts[b.id].early * 100 + counts[b.id].total;
-          return aScore - bScore;
-        })[0];
+      const candidate = pickLowestScoreRandom(
+        targetWorkers
+          .filter(staff => staff.canEarly)
+          .filter(staff => !assignedOnDay.has(staff.id)),
+        staff => counts[staff.id].early * 100 + counts[staff.id].total
+      );
 
       if (!candidate) {
         return {
@@ -965,14 +963,12 @@ function assignNewStaffWorkTypesOnly(targetStaffs) {
           message: `${d}日は遅番の最低人数${state.minLate}人と最大人数${state.maxLate}人を両立できません。`
         };
       }
-      const candidate = targetWorkers
-        .filter(staff => staff.canLate)
-        .filter(staff => !assignedOnDay.has(staff.id))
-        .sort((a, b) => {
-          const aScore = counts[a.id].late * 100 + counts[a.id].total;
-          const bScore = counts[b.id].late * 100 + counts[b.id].total;
-          return aScore - bScore;
-        })[0];
+      const candidate = pickLowestScoreRandom(
+        targetWorkers
+          .filter(staff => staff.canLate)
+          .filter(staff => !assignedOnDay.has(staff.id)),
+        staff => counts[staff.id].late * 100 + counts[staff.id].total
+      );
 
       if (!candidate) {
         return {
@@ -1044,23 +1040,94 @@ function assignNewStaffWorkTypesOnly(targetStaffs) {
   };
 }
 
+function shuffleList(list) {
+  const result = [...list];
+
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+
+  return result;
+}
+
+function pickLowestScoreRandom(list, scoreFn) {
+  if (list.length === 0) return null;
+
+  return list
+    .map(item => ({
+      item,
+      score: scoreFn(item),
+      random: Math.random()
+    }))
+    .sort((a, b) => a.score - b.score || a.random - b.random)[0].item;
+}
+
+function getActualMaxConsecutiveWorkDays(staffId) {
+  let current = 0;
+  let maximum = 0;
+
+  for (let day = 1; day <= daysInMonth(); day++) {
+    const shift = state.shifts[staffId]?.[day];
+
+    if (["早", "中", "遅"].includes(shift)) {
+      current++;
+      maximum = Math.max(maximum, current);
+    } else {
+      current = 0;
+    }
+  }
+
+  return maximum;
+}
+
+function evaluateHolidayPlacement() {
+  const warnings = [];
+  let missingHolidayCount = 0;
+  let consecutiveExcess = 0;
+
+  state.staffs.forEach(staff => {
+    const holidays = countHolidayForStaff(staff.id);
+    const missing = Math.max(0, Number(staff.holidayDays) - holidays);
+
+    if (missing > 0) {
+      missingHolidayCount += missing;
+      warnings.push(`${staff.name}：休日をあと${missing}日配置できませんでした。`);
+    }
+
+    const configuredMax = Number(staff.maxConsecutiveWorkDays);
+    const actualMax = getActualMaxConsecutiveWorkDays(staff.id);
+
+    if (configuredMax > 0 && actualMax > configuredMax) {
+      consecutiveExcess += actualMax - configuredMax;
+      warnings.push(`${staff.name}：最大${configuredMax}連勤の設定に対して${actualMax}連勤があります。`);
+    }
+  });
+
+  return {
+    warnings,
+    missingHolidayCount,
+    consecutiveExcess,
+    score: missingHolidayCount * 100000 + consecutiveExcess * 10000
+  };
+}
+
 function autoGenerate() {
   ensureShiftData();
 
   const days = daysInMonth();
-  const generationWarnings = [];
 
   for (const staff of state.staffs) {
     const desired = staff.desiredHolidays || [];
     const unavailable = staff.unavailableDays || [];
     const fixedHolidays = [...new Set([...desired, ...unavailable])];
 
-    if (staff.workDays + staff.holidayDays !== days) {
+    if (Number(staff.workDays) + Number(staff.holidayDays) !== days) {
       alert(`${staff.name} の出勤日数 + 休日数が月の日数と一致していません`);
       return;
     }
 
-    if (fixedHolidays.length > staff.holidayDays) {
+    if (fixedHolidays.length > Number(staff.holidayDays)) {
       alert(`${staff.name} の希望休・勤務不可日が休日数より多いです`);
       return;
     }
@@ -1071,69 +1138,96 @@ function autoGenerate() {
     }
   }
 
-  state.staffs.forEach(staff => {
-    const allowed = availableWorkTypes(staff);
-    const defaultShift = allowed.includes("中") ? "中" : allowed[0];
+  const prepareBaseSchedule = () => {
+    state.staffs.forEach(staff => {
+      const allowed = availableWorkTypes(staff);
+      const defaultShift = allowed.includes("中") ? "中" : allowed[0];
 
-    for (let d = 1; d <= days; d++) {
-      state.shifts[staff.id][d] = defaultShift;
-    }
-  });
-
-  state.staffs.forEach(staff => {
-    const desired = staff.desiredHolidays || [];
-    const unavailable = staff.unavailableDays || [];
-    const fixedHolidays = [...new Set([...desired, ...unavailable])];
-
-    fixedHolidays.forEach(day => {
-      state.shifts[staff.id][day] = staff.employmentType === "正社員" ? "公休" : "休";
-    });
-  });
-
-  for (let d = 1; d <= days; d++) {
-    const holidays = getHolidayCountOnDay(d);
-    const limit = getHolidayLimitOnDay(d);
-    if (holidays > limit) {
-      alert(`${d}日は希望休・勤務不可日などの固定休だけで${holidays}人が休みです。休み上限${limit}人を超えています。`);
-      return;
-    }
-  }
-
-  for (let d = 1; d <= days; d++) {
-    const workers = getWorkerCountOnDay(d);
-    const required = getRequiredPeople(d);
-
-    if (workers < required) {
-      alert(`${d}日は希望休・勤務不可日だけで必要人数を下回ります。`);
-      return;
-    }
-  }
-
-  for (const staff of state.staffs) {
-    let currentHolidayCount = countHolidayForStaff(staff.id);
-    let needHoliday = staff.holidayDays - currentHolidayCount;
-
-    while (needHoliday > 0) {
-      const candidate = findBestHolidayDay(staff);
-
-      if (!candidate) {
-        generationWarnings.push(
-          `${staff.name}：休日をあと${needHoliday}日配置できませんでした。`
-        );
-        break;
+      for (let day = 1; day <= days; day++) {
+        state.shifts[staff.id][day] = defaultShift;
       }
 
-      state.shifts[staff.id][candidate] = "休";
-      needHoliday--;
+      const desired = staff.desiredHolidays || [];
+      const unavailable = staff.unavailableDays || [];
+      const fixedHolidays = [...new Set([...desired, ...unavailable])];
+
+      fixedHolidays.forEach(day => {
+        state.shifts[staff.id][day] =
+          staff.employmentType === "正社員" ? "公休" : "休";
+      });
+    });
+  };
+
+  prepareBaseSchedule();
+
+  for (let day = 1; day <= days; day++) {
+    const holidays = getHolidayCountOnDay(day);
+    const limit = getHolidayLimitOnDay(day);
+
+    if (holidays > limit) {
+      alert(`${day}日は希望休・勤務不可日などの固定休だけで${holidays}人が休みです。休み上限${limit}人を超えています。`);
+      return;
     }
+
+    const workers = getWorkerCountOnDay(day);
+    const required = getRequiredPeople(day);
+
+    if (workers < required) {
+      alert(`${day}日は希望休・勤務不可日だけで必要人数を下回ります。`);
+      return;
+    }
+  }
+
+  let bestShifts = null;
+  let bestResult = null;
+  const attemptCount = Math.max(60, Math.min(180, state.staffs.length * 18));
+
+  for (let attempt = 0; attempt < attemptCount; attempt++) {
+    prepareBaseSchedule();
+
+    const staffOrder = shuffleList(state.staffs).sort((a, b) => {
+      const aMax = Number(a.maxConsecutiveWorkDays) || 999;
+      const bMax = Number(b.maxConsecutiveWorkDays) || 999;
+      return aMax - bMax;
+    });
+
+    for (const staff of staffOrder) {
+      let needHoliday =
+        Number(staff.holidayDays) - countHolidayForStaff(staff.id);
+
+      while (needHoliday > 0) {
+        const candidate = findBestHolidayDay(staff);
+        if (!candidate) break;
+
+        state.shifts[staff.id][candidate] = "休";
+        needHoliday--;
+      }
+    }
+
+    const result = evaluateHolidayPlacement();
+
+    if (!bestResult || result.score < bestResult.score) {
+      bestResult = result;
+      bestShifts = cloneShifts(state.shifts);
+    }
+
+    if (result.score === 0) {
+      bestResult = result;
+      bestShifts = cloneShifts(state.shifts);
+      break;
+    }
+  }
+
+  if (bestShifts) {
+    state.shifts = bestShifts;
   }
 
   state.staffs.forEach(staff => {
     const holidayDays = [];
 
-    for (let d = 1; d <= days; d++) {
-      if (["休", "法休", "公休"].includes(state.shifts[staff.id][d])) {
-        holidayDays.push(d);
+    for (let day = 1; day <= days; day++) {
+      if (["休", "法休", "公休"].includes(state.shifts[staff.id][day])) {
+        holidayDays.push(day);
       }
     }
 
@@ -1158,11 +1252,14 @@ function autoGenerate() {
   save();
   render();
 
+  const generationWarnings = bestResult?.warnings || [];
+
   if (generationWarnings.length > 0) {
     alert(
-      `勤務シフトを仮生成しました。\n遅番を含む勤務区分は配置されています。\n\n` +
-      `ただし、休みをすべて配置できなかったスタッフがあります。\n` +
-      `${generationWarnings.join("\n")}\n\n検証パネルで不足内容を確認してください。`
+      `条件を満たす候補を探し、最も近いシフトを仮生成しました。\n` +
+      `遅番を含む勤務区分は配置されています。\n\n` +
+      `${generationWarnings.join("\n")}\n\n` +
+      `日別の休み上限・必要人数・休日数の組み合わせを確認してください。`
     );
   }
 }
@@ -1216,14 +1313,12 @@ function assignBalancedWorkShifts() {
     const earlyAssigned = [];
 
     for (let i = 0; i < Number(state.minEarly); i++) {
-      const candidate = workers
-        .filter(staff => staff.canEarly)
-        .filter(staff => !earlyAssigned.includes(staff.id))
-        .sort((a, b) => {
-          const aScore = counts[a.id].early * 100 + counts[a.id].total;
-          const bScore = counts[b.id].early * 100 + counts[b.id].total;
-          return aScore - bScore;
-        })[0];
+      const candidate = pickLowestScoreRandom(
+        workers
+          .filter(staff => staff.canEarly)
+          .filter(staff => !earlyAssigned.includes(staff.id)),
+        staff => counts[staff.id].early * 100 + counts[staff.id].total
+      );
 
       if (!candidate) {
         return {
@@ -1241,15 +1336,13 @@ function assignBalancedWorkShifts() {
     const lateAssigned = [];
 
     for (let i = 0; i < Number(state.minLate); i++) {
-      const candidate = workers
-        .filter(staff => staff.canLate)
-        .filter(staff => !earlyAssigned.includes(staff.id))
-        .filter(staff => !lateAssigned.includes(staff.id))
-        .sort((a, b) => {
-          const aScore = counts[a.id].late * 100 + counts[a.id].total;
-          const bScore = counts[b.id].late * 100 + counts[b.id].total;
-          return aScore - bScore;
-        })[0];
+      const candidate = pickLowestScoreRandom(
+        workers
+          .filter(staff => staff.canLate)
+          .filter(staff => !earlyAssigned.includes(staff.id))
+          .filter(staff => !lateAssigned.includes(staff.id)),
+        staff => counts[staff.id].late * 100 + counts[staff.id].total
+      );
 
       if (!candidate) {
         return {
@@ -1487,7 +1580,8 @@ function findBestHolidayDay(staff) {
 
     candidates.push({
       day: d,
-      score
+      score,
+      random: Math.random()
     });
   }
 
@@ -1495,9 +1589,16 @@ function findBestHolidayDay(staff) {
     return null;
   }
 
-  candidates.sort((a, b) => b.score - a.score);
+  candidates.sort((a, b) => b.score - a.score || a.random - b.random);
 
-  return candidates[0].day;
+  const bestScore = candidates[0].score;
+  const topCandidates = candidates
+    .filter(candidate => candidate.score >= bestScore - 40)
+    .slice(0, 8);
+  const selected =
+    topCandidates[Math.floor(Math.random() * topCandidates.length)];
+
+  return selected.day;
 }
 
 function calculateStaffConstraintPenalty(staff) {
