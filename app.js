@@ -811,6 +811,7 @@ function normalizeHolidayLabelsForNewStaff(staff) {
 
 function autoGenerateNewStaffOnly() {
   ensureShiftData();
+  const generationWarnings = [];
 
   if (state.staffs.length === 0) {
     alert("スタッフが登録されていません");
@@ -862,8 +863,10 @@ function autoGenerateNewStaffOnly() {
       const candidate = findBestHolidayDay(staff);
 
       if (!candidate) {
-        alert(`${staff.name} の休日を、既存シフトを変更せずに配置できませんでした。\n希望休・勤務不可日・必要人数・休日数を確認してください。`);
-        return;
+        generationWarnings.push(
+          `${staff.name}：休日をあと${needHoliday}日配置できませんでした。`
+        );
+        break;
       }
 
       state.shifts[staff.id][candidate] = "休";
@@ -885,7 +888,14 @@ function autoGenerateNewStaffOnly() {
   save();
   render();
 
-  alert(`新規スタッフ ${targetStaffs.length}名分のシフトを追加生成しました。\n既存スタッフのシフトは変更していません。`);
+  const warningMessage = generationWarnings.length > 0
+    ? `\n\n休みをすべて配置できなかったスタッフがあります。\n${generationWarnings.join("\n")}\n検証パネルで不足内容を確認してください。`
+    : "";
+
+  alert(
+    `新規スタッフ ${targetStaffs.length}名分のシフトを追加生成しました。\n既存スタッフのシフトは変更していません。` +
+    warningMessage
+  );
 }
 
 function assignNewStaffWorkTypesOnly(targetStaffs) {
@@ -1038,6 +1048,7 @@ function autoGenerate() {
   ensureShiftData();
 
   const days = daysInMonth();
+  const generationWarnings = [];
 
   for (const staff of state.staffs) {
     const desired = staff.desiredHolidays || [];
@@ -1106,8 +1117,10 @@ function autoGenerate() {
       const candidate = findBestHolidayDay(staff);
 
       if (!candidate) {
-        alert(`${staff.name} の休日を必要人数・週休ルールを守りながら配置できませんでした。`);
-        return;
+        generationWarnings.push(
+          `${staff.name}：休日をあと${needHoliday}日配置できませんでした。`
+        );
+        break;
       }
 
       state.shifts[staff.id][candidate] = "休";
@@ -1144,6 +1157,14 @@ function autoGenerate() {
 
   save();
   render();
+
+  if (generationWarnings.length > 0) {
+    alert(
+      `勤務シフトを仮生成しました。\n遅番を含む勤務区分は配置されています。\n\n` +
+      `ただし、休みをすべて配置できなかったスタッフがあります。\n` +
+      `${generationWarnings.join("\n")}\n\n検証パネルで不足内容を確認してください。`
+    );
+  }
 }
 
 function assignBalancedWorkShifts() {
