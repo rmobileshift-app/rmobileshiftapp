@@ -164,6 +164,22 @@ function updateHolidayLimit(day, value) {
   render();
 }
 
+function adjustHolidayLimit(day, diff) {
+  updateHolidayLimit(day, getHolidayLimitOnDay(day) + Number(diff));
+}
+
+function setAllHolidayLimits(value) {
+  ensureCurrentMonthHolidayLimits();
+  const parsed = Math.max(0, Number(value) || 0);
+
+  for (let day = 1; day <= daysInMonth(); day++) {
+    state.monthlyHolidayLimits[state.yearMonth][day] = parsed;
+  }
+
+  save();
+  render();
+}
+
 function save() {
   saveCurrentMonthShifts();
   saveCurrentMonthStaffSettings();
@@ -2834,24 +2850,55 @@ function renderSettingsPage() {
       </div>
     </div>
 
-    <div class="card">
-      <h3>${formatMonth()} 日別の休み人数上限</h3>
-      <p class="settings-help">希望休・勤務不可日・休・法休・公休をすべて含む、1日あたりの最大人数です。</p>
-      <div class="daily-limit-grid">
+    <div class="card holiday-limit-card">
+      <div class="holiday-limit-header">
+        <div>
+          <span class="holiday-limit-kicker">MONTHLY HOLIDAY LIMIT</span>
+          <h3>${formatMonth()} 日別の休み人数上限</h3>
+          <p class="settings-help">希望休・勤務不可日・休・法休・公休を含む、1日あたりの最大人数です。</p>
+        </div>
+        <div class="holiday-limit-quick">
+          <span>一括設定</span>
+          <button type="button" onclick="setAllHolidayLimits(1)">1人</button>
+          <button type="button" onclick="setAllHolidayLimits(2)">2人</button>
+          <button type="button" onclick="setAllHolidayLimits(3)">3人</button>
+        </div>
+      </div>
+
+      <div class="weekday-row" aria-hidden="true">
+        ${["日", "月", "火", "水", "木", "金", "土"].map((weekday, index) => `
+          <span class="${index === 0 ? "sun" : index === 6 ? "sat" : ""}">${weekday}</span>
+        `).join("")}
+      </div>
+
+      <div class="daily-limit-grid calendar-grid">
+        ${Array.from({ length: getDayOfWeek(1) }, () => `<div class="daily-limit-spacer"></div>`).join("")}
         ${Array.from({ length: daysInMonth() }, (_, index) => {
           const day = index + 1;
+          const weekday = getDayOfWeek(day);
+          const weekdayLabel = ["日", "月", "火", "水", "木", "金", "土"][weekday];
+          const weekendClass = weekday === 0 ? "sunday" : weekday === 6 ? "saturday" : "";
           return `
-            <label class="daily-limit-item">
-              <span>${day}日</span>
-              <input
-                type="number"
-                min="0"
-                max="${state.staffs.length}"
-                value="${getHolidayLimitOnDay(day)}"
-                onchange="updateHolidayLimit(${day}, this.value)"
-              />
-              <small>人</small>
-            </label>
+            <div class="daily-limit-item ${weekendClass}">
+              <div class="daily-limit-date">
+                <strong>${day}</strong>
+                <span>${weekdayLabel}</span>
+              </div>
+              <div class="daily-limit-stepper">
+                <button type="button" aria-label="${day}日の上限を1人減らす" onclick="adjustHolidayLimit(${day}, -1)">−</button>
+                <label>
+                  <input
+                    type="number"
+                    min="0"
+                    value="${getHolidayLimitOnDay(day)}"
+                    onchange="updateHolidayLimit(${day}, this.value)"
+                    aria-label="${day}日の休み人数上限"
+                  />
+                  <small>人</small>
+                </label>
+                <button type="button" aria-label="${day}日の上限を1人増やす" onclick="adjustHolidayLimit(${day}, 1)">＋</button>
+              </div>
+            </div>
           `;
         }).join("")}
       </div>

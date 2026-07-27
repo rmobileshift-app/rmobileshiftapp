@@ -1653,44 +1653,262 @@ thead .sticky-name {
   font-weight: 900 !important;
 }
 /* 店舗設定：日別休み人数上限 */
+.holiday-limit-card {
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(230, 0, 126, 0.1);
+  box-shadow: 0 12px 32px rgba(57, 16, 40, 0.08);
+}
+
+.holiday-limit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 26px 20px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(230, 0, 126, 0.1), transparent 34%),
+    linear-gradient(135deg, #ffffff 0%, #fff8fb 100%);
+  border-bottom: 1px solid #f2e5ec;
+}
+
+.holiday-limit-kicker {
+  display: block;
+  margin-bottom: 6px;
+  color: #e6007e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.holiday-limit-header h3 {
+  margin: 0 0 7px;
+  font-size: 20px;
+}
+
 .settings-help {
-  margin: 0 0 14px;
+  margin: 0;
   color: #667085;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.holiday-limit-quick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid #eadde4;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+}
+
+.holiday-limit-quick > span {
+  padding: 0 5px;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.holiday-limit-quick button {
+  min-width: 44px;
+  padding: 7px 9px;
+  border: 1px solid #eadde4;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #344054;
+  font-weight: 900;
+}
+
+.holiday-limit-quick button:hover {
+  border-color: #e6007e;
+  background: #fff0f7;
+  color: #c4006b;
+}
+
+.weekday-row,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekday-row {
+  gap: 10px;
+  padding: 16px 22px 8px;
+}
+
+.weekday-row span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.weekday-row .sun {
+  color: #d92d20;
+}
+
+.weekday-row .sat {
+  color: #1570ef;
 }
 
 .daily-limit-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
   gap: 10px;
+  padding: 0 22px 24px;
 }
 
 .daily-limit-item {
-  display: grid;
-  grid-template-columns: 1fr 52px auto;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 10px;
+  min-width: 0;
+  padding: 11px;
   border: 1px solid #e4e7ec;
-  border-radius: 10px;
-  background: #f9fafb;
-  color: #344054;
-  font-weight: 700;
+  border-radius: 13px;
+  background: #ffffff;
+  box-shadow: 0 3px 10px rgba(16, 24, 40, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.daily-limit-item input {
-  width: 52px;
+.daily-limit-item:hover {
+  z-index: 1;
+  border-color: #f0a9cf;
+  box-shadow: 0 8px 18px rgba(230, 0, 126, 0.1);
+  transform: translateY(-1px);
+}
+
+.daily-limit-item.sunday {
+  background: #fff8f8;
+}
+
+.daily-limit-item.saturday {
+  background: #f6faff;
+}
+
+.daily-limit-date {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.daily-limit-date strong {
+  color: #101828;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.daily-limit-date span {
+  color: #98a2b3;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sunday .daily-limit-date strong,
+.sunday .daily-limit-date span {
+  color: #d92d20;
+}
+
+.saturday .daily-limit-date strong,
+.saturday .daily-limit-date span {
+  color: #1570ef;
+}
+
+.daily-limit-stepper {
+  display: grid;
+  grid-template-columns: 28px minmax(42px, 1fr) 28px;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.daily-limit-stepper > button {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: #f2f4f7;
+  color: #475467;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.daily-limit-stepper > button:hover {
+  background: #fce7f3;
+  color: #c4006b;
+}
+
+.daily-limit-stepper label {
+  position: relative;
   min-width: 0;
-  padding: 7px 5px;
+}
+
+.daily-limit-stepper input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 5px 18px 5px 5px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101828;
+  font-size: 14px;
+  font-weight: 900;
   text-align: center;
+  appearance: textfield;
+}
+
+.daily-limit-stepper input::-webkit-inner-spin-button,
+.daily-limit-stepper input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.daily-limit-stepper label small {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  color: #98a2b3;
+  font-size: 10px;
+  font-weight: 800;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .form-field small {
   color: #667085;
 }
 
-@media (max-width: 640px) {
-  .daily-limit-grid {
+@media (max-width: 900px) {
+  .holiday-limit-header {
+    flex-direction: column;
+  }
+
+  .weekday-row {
+    display: none;
+  }
+
+  .calendar-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding-top: 18px;
+  }
+
+  .daily-limit-spacer {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .holiday-limit-header {
+    padding: 20px 18px 16px;
+  }
+
+  .holiday-limit-quick {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .calendar-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 14px 14px 18px;
   }
 }
