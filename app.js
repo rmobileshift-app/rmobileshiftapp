@@ -16,6 +16,7 @@ const state = {
   staffs: [],
   shifts: {},
   monthlyShifts: {},
+  monthlyLastGeneratedShifts: {},
   monthlyStaffSettings: {},
   monthlyHolidayLimits: {},
   holidayLimitDefaultVersion: 2,
@@ -82,6 +83,8 @@ function loadMonthShifts() {
 
 function removeStaffFromAllMonthlyShifts(staffId) {
   state.monthlyShifts = state.monthlyShifts || {};
+  state.monthlyLastGeneratedShifts =
+    state.monthlyLastGeneratedShifts || {};
   state.monthlyStaffSettings = state.monthlyStaffSettings || {};
 
   Object.keys(state.monthlyShifts).forEach(month => {
@@ -93,6 +96,12 @@ function removeStaffFromAllMonthlyShifts(staffId) {
   Object.keys(state.monthlyStaffSettings).forEach(month => {
     if (state.monthlyStaffSettings[month]?.[staffId]) {
       delete state.monthlyStaffSettings[month][staffId];
+    }
+  });
+
+  Object.keys(state.monthlyLastGeneratedShifts).forEach(month => {
+    if (state.monthlyLastGeneratedShifts[month]?.[staffId]) {
+      delete state.monthlyLastGeneratedShifts[month][staffId];
     }
   });
 }
@@ -111,12 +120,37 @@ function saveCurrentMonthStaffSettings() {
   });
 }
 
-function loadMonthStaffSettings() {
+function loadMonthStaffSettings(referenceSettings = null) {
   state.monthlyStaffSettings = state.monthlyStaffSettings || {};
   const saved = state.monthlyStaffSettings[state.yearMonth];
 
-  // 未登録の新しい月は、切替直前の月の設定値をそのまま引き継ぐ
+  // 未登録の新しい月は、前月の休日数に近づけながら
+  // 新しい月の日数に合うよう出勤日数を調整する。
   if (!saved) {
+    const days = daysInMonth();
+
+    state.staffs.forEach(staff => {
+      const reference =
+        referenceSettings?.[staff.id] || {
+          workDays: Number(staff.workDays),
+          holidayDays: Number(staff.holidayDays)
+        };
+      const ruleHolidayDays =
+        staff.holidayRule && staff.holidayRule !== "個別設定"
+          ? calculateHolidayDaysByStaffRule(staff)
+          : null;
+      const holidayDays =
+        ruleHolidayDays !== null
+          ? ruleHolidayDays
+          : Math.max(
+              0,
+              Math.min(days, Number(reference.holidayDays) || 0)
+            );
+
+      staff.holidayDays = holidayDays;
+      staff.workDays = days - holidayDays;
+    });
+
     saveCurrentMonthStaffSettings();
     return;
   }
@@ -203,6 +237,8 @@ function load() {
 
     state.confirmedShifts = state.confirmedShifts || {};
     state.monthlyShifts = state.monthlyShifts || {};
+    state.monthlyLastGeneratedShifts =
+      state.monthlyLastGeneratedShifts || {};
     state.monthlyStaffSettings = state.monthlyStaffSettings || {};
     state.monthlyHolidayLimits = state.monthlyHolidayLimits || {};
 
@@ -445,6 +481,14 @@ function changeMonth(diff) {
   // 現在月のシフトと出勤・休日数を保存してから月を切り替える
   saveCurrentMonthShifts();
   saveCurrentMonthStaffSettings();
+  const previousMonthSettings = {};
+
+  state.staffs.forEach(staff => {
+    previousMonthSettings[staff.id] = {
+      workDays: Number(staff.workDays),
+      holidayDays: Number(staff.holidayDays)
+    };
+  });
 
   const [year, month] = state.yearMonth.split("-").map(Number);
   const date = new Date(year, month - 1 + diff, 1);
@@ -454,8 +498,8 @@ function changeMonth(diff) {
   state.yearMonth = `${y}-${m}`;
 
   // 保存済みの月ならその月の数値を復元。
-  // 初めて開く月なら、切替前の月の数値をそのまま引き継ぐ。
-  loadMonthStaffSettings();
+  // 初めて開く月なら、前月の休日数を基準に新しい月の日数へ調整。
+  loadMonthStaffSettings(previousMonthSettings);
   loadMonthShifts();
   ensureCurrentMonthHolidayLimits();
 
@@ -1085,6 +1129,7 @@ function evaluateHolidayPlacement() {
   const warnings = [];
   let missingHolidayCount = 0;
   let consecutiveExcess = 0;
+  let holidayLimitExcess = 0;
 
   state.staffs.forEach(staff => {
     const holidays = countHolidayForStaff(staff.id);
@@ -1104,18 +1149,185 @@ function evaluateHolidayPlacement() {
     }
   });
 
+  for (let day = 1; day <= daysInMonth(); day++) {
+    const holidays = getHolidayCountOnDay(day);
+    const limit = getHolidayLimitOnDay(day);
+
+    if (holidays > limit) {
+      const excess = holidays - limit;
+      holidayLimitExcess += excess;
+      warnings.push(`${day}日：休み人数が上限${limit}人を${excess}人超えています。`);
+    }
+  }
+
   return {
     warnings,
     missingHolidayCount,
     consecutiveExcess,
-    score: missingHolidayCount * 100000 + consecutiveExcess * 10000
+    holidayLimitExcess,
+    score:
+      missingHolidayCount * 100000 +
+      consecutiveExcess * 10000 +
+      holidayLimitExcess * 100
   };
+}
+
+function repairLegacyEarlyOnlyWorkTypes() {
+  const allStaffsAreEarlyOnly =
+    state.staffs.length >= 2 &&
+    state.staffs.every(
+      staff => staff.canEarly && !staff.canMiddle && !staff.canLate
+    );
+
+  if (!allStaffsAreEarlyOnly) return false;
+
+  state.staffs.forEach(staff => {
+    staff.canMiddle = true;
+    staff.canLate = true;
+  });
+
+  return true;
+}
+
+function canStaffWorkShift(staff, shift) {
+  if (shift === "早") return Boolean(staff.canEarly);
+  if (shift === "中") return Boolean(staff.canMiddle);
+  if (shift === "遅") return Boolean(staff.canLate);
+  return false;
+}
+
+function isFixedHolidayForStaff(staff, day) {
+  return (
+    (staff.desiredHolidays || []).includes(day) ||
+    (staff.unavailableDays || []).includes(day)
+  );
+}
+
+function tryCreateDifferentSchedulePattern(previousSignature) {
+  if (!previousSignature || state.staffs.length < 2) return false;
+
+  const days = Array.from(
+    { length: daysInMonth() },
+    (_, index) => index + 1
+  );
+  const staffs = shuffleList(state.staffs);
+
+  for (const firstStaff of staffs) {
+    for (const secondStaff of shuffleList(staffs)) {
+      if (firstStaff.id === secondStaff.id) continue;
+
+      const firstWeeklyErrorsBefore =
+        validateWeeklyHolidayRule(firstStaff).length;
+      const secondWeeklyErrorsBefore =
+        validateWeeklyHolidayRule(secondStaff).length;
+
+      const firstRestDays = shuffleList(days).filter(day => {
+        const firstShift = state.shifts[firstStaff.id]?.[day];
+        const secondShift = state.shifts[secondStaff.id]?.[day];
+        return (
+          ["休", "法休", "公休"].includes(firstShift) &&
+          !isFixedHolidayForStaff(firstStaff, day) &&
+          canStaffWorkShift(firstStaff, secondShift)
+        );
+      });
+
+      const secondRestDays = shuffleList(days).filter(day => {
+        const firstShift = state.shifts[firstStaff.id]?.[day];
+        const secondShift = state.shifts[secondStaff.id]?.[day];
+        return (
+          ["休", "法休", "公休"].includes(secondShift) &&
+          !isFixedHolidayForStaff(secondStaff, day) &&
+          canStaffWorkShift(secondStaff, firstShift)
+        );
+      });
+
+      for (const firstRestDay of firstRestDays) {
+        for (const secondRestDay of secondRestDays) {
+          if (firstRestDay === secondRestDay) continue;
+
+          const originalFirstRest =
+            state.shifts[firstStaff.id][firstRestDay];
+          const originalSecondWork =
+            state.shifts[secondStaff.id][firstRestDay];
+          const originalFirstWork =
+            state.shifts[firstStaff.id][secondRestDay];
+          const originalSecondRest =
+            state.shifts[secondStaff.id][secondRestDay];
+
+          state.shifts[firstStaff.id][firstRestDay] =
+            originalSecondWork;
+          state.shifts[secondStaff.id][firstRestDay] = "休";
+          state.shifts[firstStaff.id][secondRestDay] = "休";
+          state.shifts[secondStaff.id][secondRestDay] =
+            originalFirstWork;
+
+          const firstMax = Number(
+            firstStaff.maxConsecutiveWorkDays
+          );
+          const secondMax = Number(
+            secondStaff.maxConsecutiveWorkDays
+          );
+          const consecutiveOk =
+            (!firstMax ||
+              getActualMaxConsecutiveWorkDays(firstStaff.id) <=
+                firstMax) &&
+            (!secondMax ||
+              getActualMaxConsecutiveWorkDays(secondStaff.id) <=
+                secondMax);
+          const weeklyRulesOk =
+            validateWeeklyHolidayRule(firstStaff).length <=
+              firstWeeklyErrorsBefore &&
+            validateWeeklyHolidayRule(secondStaff).length <=
+              secondWeeklyErrorsBefore;
+
+          if (
+            consecutiveOk &&
+            weeklyRulesOk &&
+            JSON.stringify(state.shifts) !== previousSignature
+          ) {
+            normalizeHolidayLabelsForNewStaff(firstStaff);
+            normalizeHolidayLabelsForNewStaff(secondStaff);
+            return true;
+          }
+
+          state.shifts[firstStaff.id][firstRestDay] =
+            originalFirstRest;
+          state.shifts[secondStaff.id][firstRestDay] =
+            originalSecondWork;
+          state.shifts[firstStaff.id][secondRestDay] =
+            originalFirstWork;
+          state.shifts[secondStaff.id][secondRestDay] =
+            originalSecondRest;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 function autoGenerate() {
   ensureShiftData();
 
   const days = daysInMonth();
+  const recoveredWorkTypes = repairLegacyEarlyOnlyWorkTypes();
+  state.monthlyLastGeneratedShifts =
+    state.monthlyLastGeneratedShifts || {};
+  const existingHasShiftData = state.staffs.some(staff => {
+    for (let day = 1; day <= days; day++) {
+      const shift = state.shifts[staff.id]?.[day];
+      if (shift && shift !== "空") return true;
+    }
+    return false;
+  });
+  const previousGeneratedShifts = existingHasShiftData
+    ? cloneShifts(state.shifts)
+    : cloneShifts(
+        state.monthlyLastGeneratedShifts[state.yearMonth]
+      );
+  const previousGeneratedSignature = JSON.stringify(
+    previousGeneratedShifts
+  );
 
   for (const staff of state.staffs) {
     const desired = staff.desiredHolidays || [];
@@ -1181,41 +1393,93 @@ function autoGenerate() {
   let bestShifts = null;
   let bestResult = null;
   const attemptCount = Math.max(60, Math.min(180, state.staffs.length * 18));
+  const totalRequestedHolidays = state.staffs.reduce(
+    (total, staff) => total + Number(staff.holidayDays),
+    0
+  );
+  const totalHolidayCapacityWithinLimits = Array.from(
+    { length: days },
+    (_, index) => {
+      const day = index + 1;
+      const staffingCapacity = Math.max(
+        0,
+        state.staffs.length - getRequiredPeople(day)
+      );
+      return Math.min(getHolidayLimitOnDay(day), staffingCapacity);
+    }
+  ).reduce((total, capacity) => total + capacity, 0);
+  const minimumNecessaryHolidayLimitOverflow = Math.max(
+    0,
+    totalRequestedHolidays - totalHolidayCapacityWithinLimits
+  );
 
-  for (let attempt = 0; attempt < attemptCount; attempt++) {
-    prepareBaseSchedule();
+  const runGenerationAttempts = (
+    allowHolidayLimitOverflow,
+    attempts,
+    acceptableHolidayLimitOverflow
+  ) => {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      prepareBaseSchedule();
 
-    const staffOrder = shuffleList(state.staffs).sort((a, b) => {
-      const aMax = Number(a.maxConsecutiveWorkDays) || 999;
-      const bMax = Number(b.maxConsecutiveWorkDays) || 999;
-      return aMax - bMax;
-    });
+      const staffOrder = shuffleList(state.staffs).sort((a, b) => {
+        const aMax = Number(a.maxConsecutiveWorkDays) || 999;
+        const bMax = Number(b.maxConsecutiveWorkDays) || 999;
+        return aMax - bMax;
+      });
 
-    for (const staff of staffOrder) {
-      let needHoliday =
-        Number(staff.holidayDays) - countHolidayForStaff(staff.id);
+      for (const staff of staffOrder) {
+        let needHoliday =
+          Number(staff.holidayDays) - countHolidayForStaff(staff.id);
 
-      while (needHoliday > 0) {
-        const candidate = findBestHolidayDay(staff);
-        if (!candidate) break;
+        while (needHoliday > 0) {
+          const candidate = findBestHolidayDay(staff, {
+            allowHolidayLimitOverflow
+          });
+          if (!candidate) break;
 
-        state.shifts[staff.id][candidate] = "休";
-        needHoliday--;
+          state.shifts[staff.id][candidate] = "休";
+          needHoliday--;
+        }
+      }
+
+      const result = evaluateHolidayPlacement();
+
+      if (!bestResult || result.score < bestResult.score) {
+        bestResult = result;
+        bestShifts = cloneShifts(state.shifts);
+      }
+
+      if (
+        result.missingHolidayCount === 0 &&
+        result.consecutiveExcess === 0 &&
+        result.holidayLimitExcess <= acceptableHolidayLimitOverflow
+      ) {
+        bestResult = result;
+        bestShifts = cloneShifts(state.shifts);
+        return true;
       }
     }
 
-    const result = evaluateHolidayPlacement();
+    return false;
+  };
 
-    if (!bestResult || result.score < bestResult.score) {
-      bestResult = result;
-      bestShifts = cloneShifts(state.shifts);
-    }
+  const generatedWithinHolidayLimits =
+    minimumNecessaryHolidayLimitOverflow === 0 &&
+    runGenerationAttempts(false, attemptCount, 0);
 
-    if (result.score === 0) {
-      bestResult = result;
-      bestShifts = cloneShifts(state.shifts);
-      break;
-    }
+  if (
+    !generatedWithinHolidayLimits &&
+    (
+      !bestResult ||
+      bestResult.missingHolidayCount > 0 ||
+      bestResult.consecutiveExcess > 0
+    )
+  ) {
+    runGenerationAttempts(
+      true,
+      Math.max(50, Math.floor(attemptCount * 0.75)),
+      minimumNecessaryHolidayLimitOverflow
+    );
   }
 
   if (bestShifts) {
@@ -1249,6 +1513,16 @@ function autoGenerate() {
     return;
   }
 
+  if (
+    previousGeneratedSignature !== "{}" &&
+    JSON.stringify(state.shifts) === previousGeneratedSignature
+  ) {
+    tryCreateDifferentSchedulePattern(previousGeneratedSignature);
+  }
+
+  state.monthlyLastGeneratedShifts[state.yearMonth] =
+    cloneShifts(state.shifts);
+
   save();
   render();
 
@@ -1260,6 +1534,11 @@ function autoGenerate() {
       `遅番を含む勤務区分は配置されています。\n\n` +
       `${generationWarnings.join("\n")}\n\n` +
       `日別の休み上限・必要人数・休日数の組み合わせを確認してください。`
+    );
+  } else if (recoveredWorkTypes) {
+    alert(
+      `保存済みデータが全員「早番のみ可」になっていたため、` +
+      `通常勤務・遅番も可能な状態へ復旧して生成しました。`
     );
   }
 }
@@ -1520,10 +1799,12 @@ function countHolidayStreakIfRest(staff, targetDay) {
   return maxStreak;
 }
 
-function findBestHolidayDay(staff) {
+function findBestHolidayDay(staff, options = {}) {
   const days = daysInMonth();
   const candidates = [];
   const beforePenalty = calculateStaffConstraintPenalty(staff);
+  const allowHolidayLimitOverflow =
+    Boolean(options.allowHolidayLimitOverflow);
 
   for (let d = 1; d <= days; d++) {
     const current = state.shifts[staff.id][d];
@@ -1539,7 +1820,13 @@ function findBestHolidayDay(staff) {
       continue;
     }
 
-    if (getHolidayCountOnDay(d) >= getHolidayLimitOnDay(d)) {
+    const currentHolidayCount = getHolidayCountOnDay(d);
+    const holidayLimit = getHolidayLimitOnDay(d);
+
+    if (
+      !allowHolidayLimitOverflow &&
+      currentHolidayCount >= holidayLimit
+    ) {
       continue;
     }
 
@@ -1563,7 +1850,11 @@ function findBestHolidayDay(staff) {
       score += shortage * 80;
     }
 
-    score -= getHolidayCountOnDay(d) * 5;
+    score -= currentHolidayCount * 5;
+
+    if (allowHolidayLimitOverflow && currentHolidayCount >= holidayLimit) {
+      score -= (currentHolidayCount - holidayLimit + 1) * 5000;
+    }
 
     const holidayStreak = countHolidayStreakIfRest(staff, d);
 
@@ -2314,6 +2605,10 @@ function resetCurrentMonthShifts() {
     `${formatMonth()}のシフトをすべて空にしますか？\n\nスタッフ情報・店舗設定・他の月のシフトは削除されません。`
   )) return;
 
+  state.monthlyLastGeneratedShifts =
+    state.monthlyLastGeneratedShifts || {};
+  state.monthlyLastGeneratedShifts[state.yearMonth] =
+    cloneShifts(state.shifts);
   state.shifts = createBlankShiftsForCurrentMonth();
   state.monthlyShifts[state.yearMonth] = cloneShifts(state.shifts);
 
